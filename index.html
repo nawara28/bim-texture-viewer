@@ -1,0 +1,836 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>BIM 텍스처 뷰어 — 사진·영상 일일 반영 데모</title>
+<style>
+  body{font-family:sans-serif;margin:0;background:#111;color:#eee}
+  #top{padding:12px 16px;background:#1c1c1c;border-bottom:1px solid #333}
+  #top h1{font-size:18px;margin:0 0 4px}
+  #top p{margin:2px 0;color:#bbb;font-size:13px}
+  .sample{background:#5a3d00;color:#ffd970;padding:4px 8px;border-radius:4px;font-size:12px}
+  #bar{display:flex;flex-wrap:wrap;gap:8px;padding:10px 16px;background:#181818;align-items:center}
+  #bar label{font-size:13px}
+  #bar select,#bar input[type=range]{vertical-align:middle}
+  #wrap{display:flex;flex-wrap:wrap}
+  #view{flex:3;min-width:320px;height:560px;position:relative}
+  #view canvas{display:block}
+  #side{flex:1;min-width:280px;padding:12px 16px;background:#141414}
+  table{border-collapse:collapse;width:100%;font-size:13px}
+  td,th{border:1px solid #333;padding:5px 7px;text-align:left}
+  tr.hl td{background:#3a2f00}
+  .badge{display:inline-block;padding:1px 6px;border-radius:9px;font-size:11px}
+  .ok{background:#1d5c2e}.fail{background:#7a1f1f}.miss{background:#555}.need{background:#7a5a00}
+  #info{margin-top:10px;font-size:13px;background:#1e1e1e;border:1px solid #333;padding:8px}
+  #photo{margin-top:10px;display:none}
+  #photo img{max-width:100%;border:1px solid #444}
+  #splitCtl{display:none}
+  .legend{font-size:12px;color:#bbb;margin-top:10px;line-height:1.7}
+  .hatch-note{color:#ccc}
+  #touchPad{display:none;position:absolute;left:12px;bottom:12px;z-index:5}
+  #touchPad .row{display:flex;gap:6px;margin-top:6px;justify-content:center}
+  #touchPad button{width:52px;height:52px;font-size:20px;border-radius:10px;border:1px solid #555;background:rgba(30,30,30,.85);color:#eee;touch-action:none}
+  #touchPad button:active{background:#555}
+  #view{user-select:none;-webkit-user-select:none;-webkit-touch-callout:none}
+  #view input,#view select{user-select:text;-webkit-user-select:text}
+  #touchPad button{-webkit-tap-highlight-color:transparent}
+  #capturePanel{display:none;position:fixed;inset:0;background:#000;z-index:50;padding:0;box-sizing:border-box;overflow:hidden}
+  #capturePanel video{width:100%;height:100%;object-fit:cover;background:#222}
+  #capWrap{position:absolute;inset:0}
+  #capOverlay{position:absolute;left:0;top:0;width:100%;height:100%;touch-action:none}
+  #capTop{position:absolute;top:0;left:0;right:0;z-index:3;padding:10px 12px;display:flex;justify-content:space-between;align-items:center;background:linear-gradient(rgba(0,0,0,.7),rgba(0,0,0,0));color:#eee;font-size:15px}
+  #capTop button{font-size:16px;padding:6px 12px;background:rgba(30,30,30,.85);color:#eee;border:1px solid #555;border-radius:8px}
+  #capControls{position:absolute;left:0;right:0;bottom:0;z-index:3;background:rgba(0,0,0,.75);padding:10px 12px;max-height:48dvh;overflow:auto}
+  #capturePanel label{font-size:13px;display:inline-block;margin:4px 8px 4px 0}
+  #capturePanel input,#capturePanel select{font-size:14px}
+  #capturePanel button{font-size:14px;margin:4px 4px 4px 0;padding:6px 10px}
+  #capMsg{font-size:13px;color:#ffd970;margin-top:6px}
+  .cap-note{font-size:12px;color:#bbb;line-height:1.6}
+</style>
+<!-- CDN dependencies (documented; see README deployment section):
+     three.js r128 + OrbitControls + GLTFLoader from jsDelivr. -->
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/build/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/loaders/GLTFLoader.js"></script>
+</head>
+<body>
+<div id="top">
+  <h1>BIM 텍스처 뷰어 <span class="sample">샘플 데이터 — 실제 현장 아님</span></h1>
+  <p>설계서 12장 웹 뷰어: 날짜 전환 시 텍스처·요소 상태·대조표가 함께 바뀝니다.
+     미촬영/정합 실패/사각 구역은 숨기지 않고 별도로 표시합니다.</p>
+</div>
+<div id="bar">
+  <label>날짜 <input id="dateSlider" type="range" min="0" max="1" value="1" step="1">
+    <span id="dateLabel"></span></label>
+  <label>모드
+    <select id="mode">
+      <option value="planned">계획(BIM 단독)</option>
+      <option value="actual" selected>실제(반영 적용)</option>
+      <option value="overlay">겹침(계획 반투명 + 실제)</option>
+      <option value="split">분할(드래그 경계)</option>
+    </select></label>
+  <label>시점
+    <select id="viewMode">
+      <option value="orbit" selected>외부 궤도</option>
+      <option value="interior">내부 1인칭</option>
+      <option value="capture">촬영</option>
+    </select></label>
+  <span id="splitCtl"><label>분할 경계
+    <input id="splitSlider" type="range" min="-10" max="10" value="0" step="0.5"></label></span>
+  <label>사진/영상 업로드
+    <input id="upload" type="file" accept="image/*,video/*"></label>
+  <label>투영할 외벽
+    <select id="wallSelect"><option value="south">남측 외벽</option>
+      <option value="east">동측 외벽</option></select></label>
+  <label>GLB 불러오기 <input id="glb" type="file" accept=".glb,.gltf"></label>
+</div>
+<div id="wrap">
+  <div id="view"><div id="loadMsg" style="padding:12px">모델 로딩 중… (층별 점진 로딩 데모)</div>
+    <div id="touchPad">
+      <div class="row"><button data-fp="f" title="전진">▲</button></div>
+      <div class="row"><button data-fp="tl" title="좌회전">↶</button><button data-fp="b" title="후진">▼</button><button data-fp="tr" title="우회전">↷</button></div>
+      <div class="row"><button data-fp="l" title="좌 이동">◀</button><button data-fp="r" title="우 이동">▶</button></div>
+    </div>
+    <div id="capturePanel">
+      <div id="capWrap"><video id="capVideo" playsinline muted autoplay></video><canvas id="capOverlay"></canvas></div>
+      <div id="capTop"><span>촬영 모드</span><span><button id="capToggle" title="조작 패널 접기/펼치기">패널 접기</button><button id="capClose" title="촬영 종료">✕</button></span></div>
+      <div id="capControls">
+      <p class="cap-note">수동 정합 방식입니다. 와이어프레임을 실제 화면에 맞춰 슬라이더·드래그로 맞춘 뒤 촬영하세요. 진짜 SLAM AR 정합이 아니며, 기록된 위치는 파이프라인의 초기값으로만 쓰이고 마커 정합과 5cm 게이트로 검증합니다.</p>
+      <div>
+        <label>구역 <select id="capZone"><option value="south_wall">남측 외벽</option><option value="east_wall">동측 외벽</option><option value="lobby">로비</option><option value="interior_1f">내부 1F</option></select></label>
+        <label>층 <input id="capFloor" value="1F" size="4"></label>
+        <label>촬영점 이름 <input id="capPoint" value="P-SOUTH-01" size="14"></label>
+      </div>
+      <div>
+        <label>이동 X <input id="capOffX" type="range" min="-300" max="300" value="0"></label>
+        <label>이동 Y <input id="capOffY" type="range" min="-300" max="300" value="0"></label>
+        <label>크기 <input id="capScale" type="range" min="0.2" max="3" step="0.05" value="1"></label>
+        <label>회전 <input id="capRot" type="range" min="-45" max="45" value="0"></label>
+      </div>
+      <div>
+        <button id="capStart">카메라 켜기</button>
+        <button id="capPhoto">사진 촬영</button>
+        <button id="capRec">영상 녹화 시작</button>
+        <button id="capManifest">매니페스트 JSON 다운로드</button>
+      </div>
+      <div id="capMsg"></div>
+      </div>
+    </div>
+  </div>
+  <div id="side">
+    <h3 style="margin:4px 0">요소 대조표 <span id="sessLabel"></span></h3>
+    <table id="table"><tr><th>요소</th><th>층</th><th>상태</th><th>근거</th></tr></table>
+    <div id="info">요소를 클릭하거나 표의 행을 클릭하면 서로 강조됩니다.</div>
+    <div id="photo"><b id="photoTitle"></b><br><img id="photoImg" alt="현장 사진"></div>
+    <div class="legend">
+      <b>상태 표시 (정직한 표시, 설계서 12장)</b><br>
+      <span class="hatch-note">■ 회색 해치 = 미촬영 구역 (전날 텍스처를 재사용하지 않음)</span><br>
+      <span style="color:#ff8888">■ 붉은 테두리 = 정합 실패 구역 (전날 게시 텍스처 유지 + 사유 표시)</span><br>
+      <span style="color:#888">■ 어두운 구역 = 지상 사각 구역 (지붕 뒷면 등 촬영 불가)</span><br>
+      사진 핀을 클릭하면 원본 사진이 표시됩니다. 투영 결과에는 항상 원본 링크(핀)가 함께 제공됩니다.
+    </div>
+  </div>
+</div>
+<script>
+// ---------- Sample session data (SYNTHETIC, not real site data) ----------
+var SESSIONS = [
+  { date: "2026-10-27", zones: {
+      south_wall: {state: "PUBLISHED", reflection: "projection"},
+      east_wall:  {state: "PUBLISHED", reflection: "projection"},
+      lobby:      {state: "PUBLISHED", reflection: "pin"},
+      interior_1f: {state: "PUBLISHED", reflection: "pin"},
+      roof:       {state: "FAILED", reflection: "reconstruction",
+                   reason: "reconstruction unavailable in sample"},
+      rear_blind: {state: "MISSING", reflection: "pin"} },
+    elements: [
+      {gid: "SAMPLE-WALL-S-01", type: "IfcWall", storey: "1F",
+       status: "installed", evidence: "projection verified, gate passed", mesh: "south"},
+      {gid: "SAMPLE-CW-E-06", type: "IfcCurtainWall", storey: "6F",
+       status: "installed", evidence: "projection verified, gate passed", mesh: "east"},
+      {gid: "SAMPLE-SLAB-R-01", type: "IfcSlab", storey: "RF",
+       status: "needs_check", evidence: "scaffold present near element bounds", mesh: "roof"},
+      {gid: "SAMPLE-WALL-L-01", type: "IfcWall", storey: "1F",
+       status: "installed", evidence: "photo pin confirmed", mesh: "lobby"},
+      {gid: "SAMPLE-WALL-I-01", type: "IfcWall", storey: "1F",
+       status: "installed", evidence: "photo pin confirmed", mesh: "interior"} ] },
+  { date: "2026-10-28", zones: {
+      south_wall: {state: "PUBLISHED", reflection: "projection"},
+      east_wall:  {state: "FAILED", reflection: "projection",
+                   reason: "registration gate: dual-path diff"},
+      lobby:      {state: "PUBLISHED", reflection: "pin"},
+      interior_1f: {state: "PUBLISHED", reflection: "pin"},
+      roof:       {state: "FAILED", reflection: "reconstruction",
+                   reason: "reconstruction unavailable in sample"},
+      rear_blind: {state: "MISSING", reflection: "pin"} },
+    elements: [
+      {gid: "SAMPLE-WALL-S-01", type: "IfcWall", storey: "1F",
+       status: "installed", evidence: "projection verified, gate passed", mesh: "south"},
+      {gid: "SAMPLE-CW-E-06", type: "IfcCurtainWall", storey: "6F",
+       status: "not_installed", evidence: "no reconstructed surface in element bounds", mesh: "east"},
+      {gid: "SAMPLE-SLAB-R-01", type: "IfcSlab", storey: "RF",
+       status: "needs_check", evidence: "scaffold present near element bounds", mesh: "roof"},
+      {gid: "SAMPLE-WALL-L-01", type: "IfcWall", storey: "1F",
+       status: "installed", evidence: "photo pin confirmed", mesh: "lobby"},
+      {gid: "SAMPLE-WALL-I-01", type: "IfcWall", storey: "1F",
+       status: "installed", evidence: "photo pin confirmed", mesh: "interior"} ] }
+];
+var STATUS_KO = {installed: "설치됨", not_installed: "미설치", needs_check: "확인 필요"};
+var STATUS_CLS = {installed: "ok", not_installed: "fail", needs_check: "need"};
+
+// ---------- Renderer / scene ----------
+var view = document.getElementById("view");
+var renderer = new THREE.WebGLRenderer({antialias: true});
+renderer.setSize(view.clientWidth, 560);
+renderer.localClippingEnabled = true;
+view.appendChild(renderer.domElement);
+var scene = new THREE.Scene();
+scene.background = new THREE.Color(0x87a6c4);
+var camera = new THREE.PerspectiveCamera(50, view.clientWidth / 560, 0.1, 1000);
+camera.position.set(28, 22, 30);
+var controls = new THREE.OrbitControls(camera, renderer.domElement);
+controls.target.set(0, 10, 0);
+scene.add(new THREE.AmbientLight(0xffffff, 0.7));
+var sun = new THREE.DirectionalLight(0xffffff, 0.6);
+sun.position.set(20, 40, 20);
+scene.add(sun);
+
+// ---------- Procedural sample building (8 floors) ----------
+function hatchTexture() {
+  var c = document.createElement("canvas"); c.width = c.height = 64;
+  var g = c.getContext("2d");
+  g.fillStyle = "#777"; g.fillRect(0, 0, 64, 64);
+  g.strokeStyle = "#444"; g.lineWidth = 3;
+  for (var i = -64; i < 128; i += 12) {
+    g.beginPath(); g.moveTo(i, 0); g.lineTo(i + 64, 64); g.stroke();
+  }
+  var t = new THREE.CanvasTexture(c); t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(6, 6); return t;
+}
+function facadeTexture(base) {
+  var c = document.createElement("canvas"); c.width = 256; c.height = 256;
+  var g = c.getContext("2d");
+  g.fillStyle = base; g.fillRect(0, 0, 256, 256);
+  g.fillStyle = "#26405e";
+  for (var y = 0; y < 8; y++) for (var x = 0; x < 6; x++)
+    g.fillRect(10 + x * 42, 10 + y * 32, 30, 20);
+  return new THREE.CanvasTexture(c);
+}
+var TEX = {
+  south: facadeTexture("#c8c2b4"),
+  east: facadeTexture("#b8bcc0"),
+  interior: facadeTexture("#ddd5c2"),
+  hatch: hatchTexture()
+};
+var plannedGroup = new THREE.Group(), actualGroup = new THREE.Group();
+scene.add(plannedGroup); scene.add(actualGroup);
+var meshes = {};   // key -> {planned, actual}
+function addFloor(i, group, material) {
+  var m = new THREE.Mesh(new THREE.BoxGeometry(20, 3, 12), material);
+  m.position.set(0, 1.5 + i * 3, 0);
+  m.userData.floor = i;
+  group.add(m);
+  return m;
+}
+function buildBuilding() {
+  // Planned (ghost) copy: semi-transparent gray.
+  var ghost = new THREE.MeshLambertMaterial({color: 0x9aa4ad, transparent: true, opacity: 0.55});
+  // Actual copy: wall planes carry projected textures; body is neutral.
+  var body = new THREE.MeshLambertMaterial({color: 0xd8d2c4});
+  for (var i = 0; i < 8; i++) {
+    addFloor(i, plannedGroup, ghost);
+    addFloor(i, actualGroup, body);
+  }
+  var southGeo = new THREE.PlaneGeometry(20, 24);
+  var southP = new THREE.Mesh(southGeo, ghost.clone());
+  southP.position.set(0, 12, -6.01); southP.rotation.y = Math.PI;
+  southP.userData.element = "south"; plannedGroup.add(southP);
+  var southA = new THREE.Mesh(southGeo,
+    new THREE.MeshLambertMaterial({map: TEX.south}));
+  southA.position.copy(southP.position); southA.rotation.y = Math.PI;
+  southA.userData.element = "south"; actualGroup.add(southA);
+  var eastGeo = new THREE.PlaneGeometry(12, 24);
+  var eastP = new THREE.Mesh(eastGeo, ghost.clone());
+  eastP.position.set(10.01, 12, 0); eastP.rotation.y = Math.PI / 2;
+  eastP.userData.element = "east"; plannedGroup.add(eastP);
+  var eastA = new THREE.Mesh(eastGeo,
+    new THREE.MeshLambertMaterial({map: TEX.east}));
+  eastA.position.copy(eastP.position); eastA.rotation.y = Math.PI / 2;
+  eastA.userData.element = "east"; actualGroup.add(eastA);
+  var roofGeo = new THREE.BoxGeometry(20, 0.5, 12);
+  var roofP = new THREE.Mesh(roofGeo, ghost.clone());
+  roofP.position.set(0, 24.3, 0); roofP.userData.element = "roof";
+  plannedGroup.add(roofP);
+  var roofA = new THREE.Mesh(roofGeo,
+    new THREE.MeshLambertMaterial({color: 0x666666}));
+  roofA.position.copy(roofP.position); roofA.userData.element = "roof";
+  actualGroup.add(roofA);
+  var lobbyGeo = new THREE.BoxGeometry(6, 4, 6);
+  var lobbyP = new THREE.Mesh(lobbyGeo, ghost.clone());
+  lobbyP.position.set(-6, 2, 9); lobbyP.userData.element = "lobby";
+  plannedGroup.add(lobbyP);
+  var lobbyA = new THREE.Mesh(lobbyGeo,
+    new THREE.MeshLambertMaterial({color: 0x8a7a5a}));
+  lobbyA.position.copy(lobbyP.position); lobbyA.userData.element = "lobby";
+  actualGroup.add(lobbyA);
+  meshes = {south: {planned: southP, actual: southA},
+            east: {planned: eastP, actual: eastA},
+            roof: {planned: roofP, actual: roofA},
+            lobby: {planned: lobbyP, actual: lobbyA}};
+  // Blind zone (rear, ground truth: not photographable from here).
+  var blind = new THREE.Mesh(new THREE.BoxGeometry(8, 6, 2),
+    new THREE.MeshLambertMaterial({color: 0x222222}));
+  blind.position.set(0, 3, 9.5); blind.userData.element = "rear_blind";
+  actualGroup.add(blind); plannedGroup.add(blind.clone());
+  // ---------- 1F interior (first-person mode) ----------
+  // Shell walls face inward; floor faces up; ceiling faces down.
+  // Partitions form a cross with a central opening (door gaps).
+  var inGhost = new THREE.MeshLambertMaterial({color: 0x9aa4ad, transparent: true, opacity: 0.55});
+  var inActual = new THREE.MeshLambertMaterial({map: TEX.interior});
+  function inWall(w, h, px, py, pz, ry, group, mat) {
+    var m = new THREE.Mesh(new THREE.PlaneGeometry(w, h), mat);
+    m.position.set(px, py, pz); m.rotation.y = ry;
+    m.userData.element = "interior"; group.add(m); return m;
+  }
+  function inBox(w, h, d, px, py, pz, group, mat) {
+    var m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+    m.position.set(px, py, pz);
+    m.userData.element = "interior"; group.add(m); return m;
+  }
+  var inPlannedFirst = null, inActualFirst = null;
+  [plannedGroup, actualGroup].forEach(function (group, gi) {
+    var mat = gi === 0 ? inGhost : inActual;
+    var first = inWall(16, 3, 0, 1.5, -5, 0, group, mat);
+    inWall(16, 3, 0, 1.5, 5, Math.PI, group, mat);
+    inWall(10, 3, -8, 1.5, 0, Math.PI / 2, group, mat);
+    inWall(10, 3, 8, 1.5, 0, -Math.PI / 2, group, mat);
+    inBox(0.2, 3, 4, 0, 1.5, -3, group, mat);
+    inBox(0.2, 3, 4, 0, 1.5, 3, group, mat);
+    inBox(6, 3, 0.2, -5, 1.5, 0, group, mat);
+    inBox(6, 3, 0.2, 5, 1.5, 0, group, mat);
+    if (gi === 0) inPlannedFirst = first; else inActualFirst = first;
+    var floor = new THREE.Mesh(new THREE.PlaneGeometry(16, 10),
+      new THREE.MeshLambertMaterial({color: 0x8a7f6a}));
+    floor.rotation.x = -Math.PI / 2; floor.position.set(0, 0.05, 0);
+    group.add(floor);
+    var ceil = new THREE.Mesh(new THREE.PlaneGeometry(16, 10),
+      new THREE.MeshLambertMaterial({color: 0xcfc8b8}));
+    ceil.rotation.x = Math.PI / 2; ceil.position.set(0, 2.95, 0);
+    group.add(ceil);
+  });
+  // Shared materials: applySession's zone-state tint/hatch propagates
+  // to every interior wall through these two mesh references.
+  meshes.interior = {planned: inPlannedFirst, actual: inActualFirst};
+  // Photo pins at capture points.
+  addPin("P-SOUTH-01", new THREE.Vector3(0, 2, -9), "south");
+  addPin("P-EAST-01", new THREE.Vector3(13, 2, 0), "east");
+  addPin("P-LOBBY-01", new THREE.Vector3(-6, 2, 13), "lobby");
+}
+function addPin(id, pos, wall) {
+  var pin = new THREE.Mesh(new THREE.SphereGeometry(0.6, 12, 12),
+    new THREE.MeshBasicMaterial({color: 0xffcc00}));
+  pin.position.copy(pos);
+  pin.userData.pin = id; pin.userData.wall = wall;
+  scene.add(pin);
+}
+buildBuilding();
+// Progressive reveal: floors appear one by one (demo of chunked loading;
+// a real GLB uses split files + frustum culling, see README).
+(function progressive() {
+  var all = plannedGroup.children.concat(actualGroup.children);
+  all.forEach(function (m) { m.visible = false; });
+  var i = 0;
+  var timer = setInterval(function () {
+    if (i >= all.length) {
+      clearInterval(timer);
+      document.getElementById("loadMsg").style.display = "none";
+      applySession(); return;
+    }
+    all[i].visible = true; i++;
+  }, 60);
+})();
+
+// ---------- Session application ----------
+var current = SESSIONS.length - 1;
+var splitPlane = new THREE.Plane(new THREE.Vector3(-1, 0, 0), 0);
+function wallMeshFor(zone) {
+  return {south_wall: "south", east_wall: "east", lobby: "lobby",
+          roof: "roof", interior_1f: "interior"}[zone] || null;
+}
+function applySession() {
+  var sess = SESSIONS[current];
+  document.getElementById("dateLabel").textContent = sess.date;
+  document.getElementById("sessLabel").textContent = "(" + sess.date + ")";
+  // Zone states -> wall materials (honest display).
+  Object.keys(sess.zones).forEach(function (zone) {
+    var z = sess.zones[zone];
+    var key = wallMeshFor(zone);
+    if (!key || !meshes[key]) return;
+    var m = meshes[key].actual;
+    if (z.state === "MISSING") {
+      m.material.map = TEX.hatch; m.material.color.set(0xffffff);
+      m.material.needsUpdate = true;
+    } else if (z.state === "FAILED") {
+      // Failed zone keeps the previous published texture; red tint + reason.
+      m.material.color.set(0xff6666); m.material.needsUpdate = true;
+    } else {
+      m.material.color.set(0xffffff); m.material.needsUpdate = true;
+    }
+  });
+  renderTable(sess);
+  applyMode();
+}
+function renderTable(sess) {
+  var table = document.getElementById("table");
+  table.innerHTML = "<tr><th>요소</th><th>층</th><th>상태</th><th>근거</th></tr>";
+  sess.elements.forEach(function (el) {
+    var tr = document.createElement("tr");
+    tr.dataset.mesh = el.mesh; tr.dataset.gid = el.gid;
+    tr.innerHTML = "<td>" + el.gid + "<br><small>" + el.type + "</small></td>"
+      + "<td>" + el.storey + "</td>"
+      + "<td><span class='badge " + STATUS_CLS[el.status] + "'>"
+      + STATUS_KO[el.status] + "</span></td>"
+      + "<td>" + el.evidence + "</td>";
+    tr.onclick = function () { highlight(el.mesh, el); };
+    table.appendChild(tr);
+  });
+}
+var highlighted = null;
+function highlight(meshKey, el) {
+  if (meshKey === "interior") {
+    document.getElementById("viewMode").value = "interior";
+    setViewMode("interior");
+  }
+  if (highlighted) highlighted.material.emissive = new THREE.Color(0x000000);
+  var m = meshes[meshKey] && meshes[meshKey].actual;
+  if (m) {
+    m.material.emissive = new THREE.Color(0x664d00);
+    highlighted = m;
+    controls.target.copy(m.position);
+  }
+  document.querySelectorAll("#table tr").forEach(function (tr) {
+    tr.classList.toggle("hl", tr.dataset.gid === (el && el.gid));
+  });
+  if (el) {
+    document.getElementById("info").innerHTML =
+      "<b>" + el.gid + "</b> (" + el.type + ", " + el.storey + ") — "
+      + STATUS_KO[el.status] + "<br>근거: " + el.evidence;
+  }
+}
+function applyMode() {
+  var mode = document.getElementById("mode").value;
+  document.getElementById("splitCtl").style.display =
+    mode === "split" ? "inline" : "none";
+  var showP = mode === "planned" || mode === "overlay" || mode === "split";
+  var showA = mode !== "planned";
+  plannedGroup.visible = showP; actualGroup.visible = showA;
+  plannedGroup.traverse(function (m) {
+    if (m.material) {
+      m.material.transparent = mode === "overlay";
+      m.material.opacity = mode === "overlay" ? 0.35 : 0.55;
+      m.material.clippingPlanes = null; m.material.needsUpdate = true;
+    }
+  });
+  actualGroup.traverse(function (m) {
+    if (m.material) { m.material.clippingPlanes = null; m.material.needsUpdate = true; }
+  });
+  if (mode === "split") {
+    var d = parseFloat(document.getElementById("splitSlider").value);
+    splitPlane.constant = d;
+    var inv = new THREE.Plane(new THREE.Vector3(1, 0, 0), -d);
+    plannedGroup.traverse(function (m) {
+      if (m.material) { m.material.clippingPlanes = [inv]; m.material.needsUpdate = true; }
+    });
+    actualGroup.traverse(function (m) {
+      if (m.material) { m.material.clippingPlanes = [splitPlane]; m.material.needsUpdate = true; }
+    });
+  }
+}
+document.getElementById("dateSlider").oninput = function (e) {
+  current = parseInt(e.target.value, 10); applySession();
+};
+document.getElementById("mode").onchange = applyMode;
+document.getElementById("splitSlider").oninput = applyMode;
+
+// ---------- Picking: element <-> table ----------
+var ray = new THREE.Raycaster(), mouse = new THREE.Vector2();
+renderer.domElement.addEventListener("click", function (e) {
+  if (lastLookDrag > 6) { lastLookDrag = 0; return; }
+  var r = renderer.domElement.getBoundingClientRect();
+  mouse.set(((e.clientX - r.left) / r.width) * 2 - 1,
+            -((e.clientY - r.top) / r.height) * 2 + 1);
+  ray.setFromCamera(mouse, camera);
+  var hits = ray.intersectObjects(scene.children, true);
+  for (var i = 0; i < hits.length; i++) {
+    var o = hits[i].object;
+    if (o.userData.element === "interior" && !fp.active) continue;
+    if (o.userData.pin) {
+      showPhoto(o.userData.pin, o.userData.wall);
+      return;
+    }
+    if (o.userData.element && meshes[o.userData.element]) {
+      var sess = SESSIONS[current];
+      var el = null;
+      sess.elements.forEach(function (x) { if (x.mesh === o.userData.element) el = x; });
+      if (el) highlight(o.userData.element, el);
+      return;
+    }
+  }
+});
+function showPhoto(pinId, wall) {
+  // Sample photo: procedural canvas image (synthetic, labeled as sample).
+  var c = document.createElement("canvas"); c.width = 320; c.height = 240;
+  var g = c.getContext("2d");
+  g.fillStyle = "#c8c2b4"; g.fillRect(0, 0, 320, 240);
+  g.fillStyle = "#26405e";
+  for (var y = 0; y < 6; y++) for (var x = 0; x < 5; x++)
+    g.fillRect(10 + x * 62, 10 + y * 38, 48, 26);
+  g.fillStyle = "#000"; g.font = "16px sans-serif";
+  g.fillText("SAMPLE PHOTO " + pinId + " (synthetic)", 10, 230);
+  document.getElementById("photoImg").src = c.toDataURL();
+  document.getElementById("photoTitle").textContent =
+    "사진 핀 " + pinId + " — 원본 사진 (샘플 이미지)";
+  document.getElementById("photo").style.display = "block";
+}
+
+// ---------- Upload: image / video -> projected texture on a wall ----------
+document.getElementById("upload").onchange = function (e) {
+  var file = e.target.files[0];
+  if (!file) return;
+  var wall = document.getElementById("wallSelect").value;
+  var mesh = meshes[wall].actual;
+  if (file.type.indexOf("image") === 0) {
+    var url = URL.createObjectURL(file);
+    new THREE.TextureLoader().load(url, function (tex) {
+      mesh.material.map = tex; mesh.material.color.set(0xffffff);
+      mesh.material.needsUpdate = true;
+      document.getElementById("info").textContent =
+        "업로드한 사진을 " + (wall === "south" ? "남측" : "동측") +
+        " 외벽에 투영했습니다. (브라우저 투영: 포즈는 촬영점 기본값 사용)";
+    });
+  } else if (file.type.indexOf("video") === 0) {
+    // Video -> frame capture -> same projection path (design ch.8).
+    var video = document.createElement("video");
+    video.muted = true; video.playsInline = true;
+    video.src = URL.createObjectURL(file);
+    video.addEventListener("loadeddata", function () {
+      video.currentTime = Math.min(0.5, video.duration / 2);
+    });
+    video.addEventListener("seeked", function () {
+      var c = document.createElement("canvas");
+      c.width = video.videoWidth; c.height = video.videoHeight;
+      c.getContext("2d").drawImage(video, 0, 0);
+      var tex = new THREE.CanvasTexture(c);
+      mesh.material.map = tex; mesh.material.color.set(0xffffff);
+      mesh.material.needsUpdate = true;
+      document.getElementById("info").textContent =
+        "영상에서 프레임을 캡처해 " + (wall === "south" ? "남측" : "동측") +
+        " 외벽에 투영했습니다. (브라우저 범위: 서버 정합 파이프라인은 별도)";
+    });
+    video.load();
+  } else {
+    document.getElementById("info").textContent =
+      "이미지 또는 영상 파일만 업로드할 수 있습니다.";
+  }
+};
+
+// ---------- GLB upload (real server-converted GLB goes through here) ----------
+document.getElementById("glb").onchange = function (e) {
+  var file = e.target.files[0];
+  if (!file) return;
+  var url = URL.createObjectURL(file);
+  new THREE.GLTFLoader().load(url, function (gltf) {
+    var group = new THREE.Group();
+    group.add(gltf.scene);
+    scene.add(group);
+    document.getElementById("info").textContent =
+      "GLB를 불러왔습니다. 운영 경로는 서버에서 IfcOpenShell로 변환한 GLB입니다.";
+  }, undefined, function (err) {
+    document.getElementById("info").textContent =
+      "GLB 로딩 실패: " + err.message;
+  });
+};
+
+// ---------- View modes: orbit / interior first-person / capture ----------
+var FP_BOUNDS = {minX: -7.6, maxX: 7.6, minZ: -4.6, maxZ: 4.6};
+var FP_COLLIDERS = [
+  {minX: -0.1, maxX: 0.1, minZ: -5, maxZ: -1},
+  {minX: -0.1, maxX: 0.1, minZ: 1, maxZ: 5},
+  {minX: -8, maxX: -2, minZ: -0.1, maxZ: 0.1},
+  {minX: 2, maxX: 8, minZ: -0.1, maxZ: 0.1}
+];
+var fp = {active: false, yaw: 0, pitch: 0, pos: new THREE.Vector3(0, 1.6, 4),
+          keys: {}, touch: {}};
+var fpClock = new THREE.Clock();
+var lookDrag = null, lastLookDrag = 0, capDrag = null;
+var capActive = false, capStream = null, capRecorder = null, capChunks = [];
+var capRecording = false, capId = null, capFileName = "";
+var capAlign = {offset_x: 0, offset_y: 0, scale: 1, rotation: 0};
+var CAP_ZONES = {
+  south_wall: {w: 20, h: 24, d: 2, label: "남측 외벽"},
+  east_wall: {w: 12, h: 24, d: 2, label: "동측 외벽"},
+  lobby: {w: 6, h: 4, d: 6, label: "로비"},
+  interior_1f: {w: 16, h: 3, d: 10, label: "내부 1F"}
+};
+function fpCollide(p) {
+  p.x = Math.max(FP_BOUNDS.minX, Math.min(FP_BOUNDS.maxX, p.x));
+  p.z = Math.max(FP_BOUNDS.minZ, Math.min(FP_BOUNDS.maxZ, p.z));
+  var r = 0.3;
+  FP_COLLIDERS.forEach(function (b) {
+    var cx = Math.max(b.minX, Math.min(b.maxX, p.x));
+    var cz = Math.max(b.minZ, Math.min(b.maxZ, p.z));
+    var dx = p.x - cx, dz = p.z - cz;
+    var d2 = dx * dx + dz * dz;
+    if (d2 < r * r) {
+      if (d2 === 0) { p.x = b.maxX + r; return; }
+      var d = Math.sqrt(d2);
+      p.x = cx + dx / d * r; p.z = cz + dz / d * r;
+    }
+  });
+}
+function fpApplyCamera() {
+  camera.rotation.order = "YXZ";
+  camera.rotation.y = fp.yaw; camera.rotation.x = fp.pitch; camera.rotation.z = 0;
+  camera.position.copy(fp.pos);
+}
+function setViewMode(mode) {
+  fp.active = mode === "interior";
+  document.getElementById("touchPad").style.display = fp.active ? "block" : "none";
+  document.getElementById("capturePanel").style.display = mode === "capture" ? "block" : "none";
+  capActive = mode === "capture";
+  if (!capActive) stopCamera();
+  controls.enabled = mode === "orbit";
+  if (mode === "interior") {
+    fp.pos.set(0, 1.6, 4); fp.yaw = 0; fp.pitch = 0; fpApplyCamera();
+  } else if (mode === "orbit") {
+    camera.position.set(28, 22, 30); controls.target.set(0, 10, 0);
+  }
+}
+document.getElementById("viewMode").onchange = function (e) { setViewMode(e.target.value); };
+function fpUpdate() {
+  if (!fp.active) return;
+  var dt = Math.min(fpClock.getDelta(), 0.05);
+  var speed = 3, turn = 1.8;
+  var f = (fp.keys.w || fp.touch.f ? 1 : 0) - (fp.keys.s || fp.touch.b ? 1 : 0);
+  var r = (fp.keys.d || fp.touch.r ? 1 : 0) - (fp.keys.a || fp.touch.l ? 1 : 0);
+  var t = (fp.touch.tr ? 1 : 0) - (fp.touch.tl ? 1 : 0);
+  fp.yaw -= t * turn * dt;
+  var sin = Math.sin(fp.yaw), cos = Math.cos(fp.yaw);
+  fp.pos.x += (-sin * f + cos * r) * speed * dt;
+  fp.pos.z += (-cos * f - sin * r) * speed * dt;
+  fpCollide(fp.pos);
+  fpApplyCamera();
+}
+var FP_KEYS = {KeyW: "w", ArrowUp: "w", KeyS: "s", ArrowDown: "s",
+               KeyA: "a", ArrowLeft: "a", KeyD: "d", ArrowRight: "d"};
+window.addEventListener("keydown", function (e) {
+  var k = FP_KEYS[e.code];
+  if (k) {
+    fp.keys[k] = true;
+    if (fp.active && e.code.indexOf("Arrow") === 0) e.preventDefault();
+  }
+});
+window.addEventListener("keyup", function (e) {
+  var k = FP_KEYS[e.code];
+  if (k) fp.keys[k] = false;
+});
+document.querySelectorAll("#touchPad button").forEach(function (btn) {
+  var key = btn.dataset.fp;
+  btn.addEventListener("pointerdown", function (e) { e.preventDefault(); fp.touch[key] = true; });
+  btn.addEventListener("pointerup", function (e) { e.preventDefault(); fp.touch[key] = false; });
+  btn.addEventListener("pointerleave", function () { fp.touch[key] = false; });
+  btn.addEventListener("pointercancel", function () { fp.touch[key] = false; });
+});
+// Long-press on the nav buttons must not open the browser copy/selection
+// menu: the buttons are text glyphs, so Chrome selects them on long-press
+// without this guard.
+["contextmenu", "selectstart"].forEach(function (t) {
+  document.getElementById("touchPad").addEventListener(t, function (e) { e.preventDefault(); });
+  renderer.domElement.addEventListener(t, function (e) { e.preventDefault(); });
+});
+renderer.domElement.addEventListener("pointerdown", function (e) {
+  lookDrag = {x: e.clientX, y: e.clientY, moved: 0};
+  lastLookDrag = 0;
+});
+document.getElementById("capOverlay").addEventListener("pointerdown", function (e) {
+  capDrag = {x: e.clientX, y: e.clientY};
+});
+window.addEventListener("pointermove", function (e) {
+  if (lookDrag && fp.active) {
+    var dx = e.clientX - lookDrag.x, dy = e.clientY - lookDrag.y;
+    lookDrag.x = e.clientX; lookDrag.y = e.clientY;
+    lookDrag.moved += Math.abs(dx) + Math.abs(dy);
+    fp.yaw -= dx * 0.005;
+    fp.pitch = Math.max(-1.2, Math.min(1.2, fp.pitch - dy * 0.005));
+    fpApplyCamera();
+  }
+  if (capDrag) {
+    capAlign.offset_x = Math.max(-300, Math.min(300, capAlign.offset_x + e.clientX - capDrag.x));
+    capAlign.offset_y = Math.max(-300, Math.min(300, capAlign.offset_y + e.clientY - capDrag.y));
+    capDrag.x = e.clientX; capDrag.y = e.clientY;
+    document.getElementById("capOffX").value = capAlign.offset_x;
+    document.getElementById("capOffY").value = capAlign.offset_y;
+  }
+});
+window.addEventListener("pointerup", function () {
+  if (lookDrag) lastLookDrag = lookDrag.moved;
+  lookDrag = null; capDrag = null;
+});
+
+// ---------- Capture mode: camera + BIM wireframe overlay + position log ----------
+function capNewId() {
+  if (!capId) capId = "CAP-" + Date.now().toString(36);
+  return capId;
+}
+function capMsg(text) { document.getElementById("capMsg").textContent = text; }
+function downloadBlob(blob, name) {
+  var a = document.createElement("a");
+  a.href = URL.createObjectURL(blob); a.download = name; a.click();
+}
+function drawWireframe() {
+  var video = document.getElementById("capVideo");
+  var cv = document.getElementById("capOverlay");
+  var wrap = document.getElementById("capWrap");
+  var w = wrap.clientWidth, h = video.clientHeight || 240;
+  if (cv.width !== w || cv.height !== h) { cv.width = w; cv.height = h; }
+  var g = cv.getContext("2d");
+  g.clearRect(0, 0, cv.width, cv.height);
+  var zone = CAP_ZONES[document.getElementById("capZone").value] || CAP_ZONES.south_wall;
+  var cx = cv.width / 2 + capAlign.offset_x;
+  var cy = cv.height / 2 + capAlign.offset_y;
+  var s = capAlign.scale * Math.min(cv.width / 40, cv.height / 40);
+  var rot = capAlign.rotation * Math.PI / 180;
+  var cos = Math.cos(rot), sin = Math.sin(rot);
+  function pt(x, y, z) {
+    var persp = 1 / (1 + z * 0.03);
+    var px = x * persp, py = y * persp;
+    var rx = px * cos - py * sin, ry = px * sin + py * cos;
+    return [cx + rx * s, cy + ry * s];
+  }
+  var hw = zone.w / 2, hh = zone.h / 2, hd = zone.d / 2;
+  var corners = [
+    pt(-hw, -hh, -hd), pt(hw, -hh, -hd), pt(hw, hh, -hd), pt(-hw, hh, -hd),
+    pt(-hw, -hh, hd), pt(hw, -hh, hd), pt(hw, hh, hd), pt(-hw, hh, hd)
+  ];
+  var edges = [[0,1],[1,2],[2,3],[3,0],[4,5],[5,6],[6,7],[7,4],[0,4],[1,5],[2,6],[3,7]];
+  g.strokeStyle = "#00e5ff"; g.lineWidth = 2;
+  edges.forEach(function (e) {
+    g.beginPath(); g.moveTo(corners[e[0]][0], corners[e[0]][1]);
+    g.lineTo(corners[e[1]][0], corners[e[1]][1]); g.stroke();
+  });
+  g.fillStyle = "#00e5ff";
+  corners.forEach(function (c) { g.beginPath(); g.arc(c[0], c[1], 3, 0, 7); g.fill(); });
+  g.font = "16px sans-serif";
+  g.fillText(zone.label + " 와이어프레임 (수동 정합)", 8, 20);
+}
+[["capOffX", "offset_x"], ["capOffY", "offset_y"],
+ ["capScale", "scale"], ["capRot", "rotation"]].forEach(function (pair) {
+  document.getElementById(pair[0]).oninput = function (e) {
+    capAlign[pair[1]] = parseFloat(e.target.value);
+  };
+});
+document.getElementById("capZone").onchange = function () { drawWireframe(); };
+function startCamera() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    capMsg("이 브라우저에서는 카메라를 열 수 없습니다. HTTPS 페이지에서 다시 시도하세요.");
+    return;
+  }
+  navigator.mediaDevices.getUserMedia({video: {facingMode: "environment"}, audio: false})
+    .then(function (stream) {
+      capStream = stream;
+      var video = document.getElementById("capVideo");
+      video.srcObject = stream; video.play();
+      capNewId();
+      capMsg("카메라가 켜졌습니다. 와이어프레임을 실제 화면에 맞춘 뒤 촬영하세요.");
+    })
+    .catch(function (err) {
+      capMsg("카메라를 열 수 없습니다: " + err.message + " (권한·HTTPS 확인)");
+    });
+}
+function stopCamera() {
+  if (capStream) {
+    capStream.getTracks().forEach(function (t) { t.stop(); });
+    capStream = null;
+  }
+  if (capRecorder && capRecording) {
+    try { capRecorder.stop(); } catch (err) { /* already stopped */ }
+    capRecording = false;
+  }
+}
+document.getElementById("capStart").onclick = startCamera;
+document.getElementById("capClose").onclick = function () {
+  var sel = document.getElementById("viewMode");
+  sel.value = "orbit"; setViewMode("orbit");
+};
+document.getElementById("capToggle").onclick = function (e) {
+  var c = document.getElementById("capControls");
+  var hidden = c.style.display === "none";
+  c.style.display = hidden ? "block" : "none";
+  e.target.textContent = hidden ? "패널 접기" : "패널 펼치기";
+};
+document.getElementById("capPhoto").onclick = function () {
+  var video = document.getElementById("capVideo");
+  if (!capStream || !video.videoWidth) { capMsg("먼저 카메라를 켜세요."); return; }
+  var c = document.createElement("canvas");
+  c.width = video.videoWidth; c.height = video.videoHeight;
+  c.getContext("2d").drawImage(video, 0, 0);
+  var id = capNewId();
+  capFileName = id + ".jpg";
+  c.toBlob(function (blob) {
+    downloadBlob(blob, capFileName);
+    capMsg("사진을 저장했습니다: " + capFileName + " — 매니페스트도 다운로드하세요.");
+  }, "image/jpeg", 0.92);
+};
+document.getElementById("capRec").onclick = function () {
+  var btn = document.getElementById("capRec");
+  if (capRecording) { capRecorder.stop(); return; }
+  if (!capStream) { capMsg("먼저 카메라를 켜세요."); return; }
+  var mime = "";
+  ["video/webm;codecs=vp9", "video/webm;codecs=vp8", "video/webm"].forEach(function (m) {
+    if (!mime && window.MediaRecorder && MediaRecorder.isTypeSupported(m)) mime = m;
+  });
+  try {
+    capRecorder = mime ? new MediaRecorder(capStream, {mimeType: mime}) : new MediaRecorder(capStream);
+  } catch (err) { capMsg("영상 녹화를 시작할 수 없습니다: " + err.message); return; }
+  capChunks = [];
+  capRecorder.ondataavailable = function (e) { if (e.data.size) capChunks.push(e.data); };
+  capRecorder.onstop = function () {
+    var blob = new Blob(capChunks, {type: capRecorder.mimeType || "video/webm"});
+    var id = capNewId();
+    capFileName = id + ".webm";
+    downloadBlob(blob, capFileName);
+    capRecording = false; btn.textContent = "영상 녹화 시작";
+    capMsg("영상을 저장했습니다: " + capFileName + " — 매니페스트도 다운로드하세요.");
+  };
+  capRecorder.start(); capRecording = true; btn.textContent = "영상 녹화 중지";
+  capMsg("녹화 중입니다. 중지하면 파일이 다운로드됩니다.");
+};
+document.getElementById("capManifest").onclick = function () {
+  var id = capNewId();
+  var manifest = {
+    capture_id: id,
+    captured_at: new Date().toISOString(),
+    zone_id: document.getElementById("capZone").value,
+    floor: document.getElementById("capFloor").value,
+    position_label: document.getElementById("capPoint").value,
+    alignment: {offset_x: capAlign.offset_x, offset_y: capAlign.offset_y,
+                scale: capAlign.scale, rotation: capAlign.rotation},
+    media_type: capFileName ? (capFileName.endsWith(".webm") ? "video" : "photo") : "",
+    file_name: capFileName
+  };
+  downloadBlob(new Blob([JSON.stringify(manifest, null, 2)], {type: "application/json"}), id + ".json");
+  capMsg("매니페스트를 저장했습니다: " + id + ".json" +
+    (capFileName ? " (미디어: " + capFileName + ")" : " (미디어 없음 — 사진/영상 촬영 후 다시 저장하세요)"));
+};
+
+function animate() {
+  requestAnimationFrame(animate);
+  fpUpdate();
+  if (capActive) drawWireframe();
+  controls.update();
+  renderer.render(scene, camera);
+}
+animate();
+</script>
+</body>
+</html>
